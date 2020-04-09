@@ -27,15 +27,15 @@ func main() {
 	runType := args[0]
 	switch runType {
 	case "server":
-		server()
+		runServer()
 	case "client":
-		client()
+		runClient()
 	default:
 		log.Fatalf("valid args are 'client' or 'server' only!")
 	}
 }
 
-func server() {
+func runServer() {
 	ln, err := net.Listen("tcp", serverAddr)
 	if err != nil {
 		log.Fatalf("could not setup listener: %v\n", err)
@@ -54,7 +54,7 @@ func server() {
 		size, err := conn.Read(buf)
 		if err != nil {
 			if err == io.EOF {
-				log.Printf("%s: [disconnected]\n", clientAddr)
+				log.Printf("%s: [disconnected]", clientAddr)
 				currClients[clientAddr].Ok = false
 				return
 			}
@@ -70,7 +70,8 @@ func server() {
 		}
 		currClients[clientAddr] = cClient
 		log.Printf("%s: [connected]", clientAddr)
-		fmt.Fprintf(conn, "#### Welcome to TCPChat! ####\n")
+		broadcastMessage("[connected]", cClient)
+		fmt.Fprintf(conn, "#### Welcome to TCPChat! ####")
 		// waiting for any writes from client
 		go func(conn net.Conn, c *ChatClient) {
 			for {
@@ -79,6 +80,7 @@ func server() {
 				if err != nil {
 					if err == io.EOF {
 						log.Printf("%s: [disconnected]\n", c.Address)
+						broadcastMessage("[disconnected]", c)
 						currClients[clientAddr].Ok = false
 						return
 					}
@@ -86,21 +88,25 @@ func server() {
 				}
 				out := string(buf[:size])
 				log.Printf("%s: %s", conn.RemoteAddr(), out)
-				for addr, cc := range currClients {
-					if addr == conn.RemoteAddr().String() || !c.Ok {
-						continue
-					}
-					_, err := fmt.Fprintf(cc.Conn, "%s: %s", strings.Trim(c.Username, "\n"), out)
-					if err != nil {
-						log.Fatalf("could not write message to other clients: %v\n", err)
-					}
-				}
+				broadcastMessage(out, c)
 			}
 		}(conn, cClient)
 	}
 }
 
-func client() {
+func broadcastMessage(message string, from *ChatClient) {
+	for addr, cc := range currClients {
+		if addr == from.Address || !cc.Ok {
+			continue
+		}
+		_, err := fmt.Fprintf(cc.Conn, "%s: %s", strings.Trim(from.Username, "\n"), message)
+		if err != nil {
+			log.Fatalf("could not write message to other client: %v\n", err)
+		}
+	}
+}
+
+func runClient() {
 	conn, err := net.Dial("tcp", serverAddr)
 	if err != nil {
 		log.Fatalf("could not dial to tcp server: %v\n", err)
@@ -124,9 +130,12 @@ func client() {
 		}
 	}()
 	for scanner.Scan() {
-		fmt.Fprintf(conn, "%s\n", scanner.Text())
+		text := scanner.Text()
+		if text == "!exit" {
+			os.Exit(1)
+		}
+		fmt.Fprintf(conn, "%s\n", text)
 	}
-	log.Println("scanner ended!")
 	if err := scanner.Err(); err != nil {
 		log.Println(err)
 	}
